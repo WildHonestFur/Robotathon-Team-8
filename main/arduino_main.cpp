@@ -7,6 +7,7 @@
 #include <Bluepad32.h>
 #include <uni.h>
 #include "controller_callbacks.h"
+#define ONBOARD_LED_PIN 2 // defines the word "ONBOARD_LED_PIN" as the number 2 for readability. Note that pin 2 is directly attached to the onboard LED of the microcontroller.
 
 extern ControllerPtr myControllers[BP32_MAX_GAMEPADS]; // BP32 library allows for up to 4 concurrent controller connections, but we only need 1
 
@@ -30,25 +31,12 @@ void dumpGamepad(ControllerPtr ctl) {
 }
 
 void setup() {
-    BP32.setup(&onConnectedController, &onDisconnectedController);
-    BP32.forgetBluetoothKeys(); 
-    esp_log_level_set("gpio", ESP_LOG_ERROR); // Suppress info log spam from gpio_isr_service
-    uni_bt_allowlist_set_enabled(true);
+    pinMode(ONBOARD_LED_PIN, OUTPUT); // configures pin 2 to be a GPIO output pin 
 }
 
 void loop() {
-    vTaskDelay(1); // Ensures WDT does not get triggered when no controller is connected
-    BP32.update(); 
-    for (auto myController : myControllers) { // Only execute code when controller is connected
-        if (myController && myController->isConnected() && myController->hasData()) {        
-          
-            /*
-            ====================
-            Your code goes here!
-            ====================
-            */
-
-            dumpGamepad(myController); // Prints the gamepad state, delete or comment if don't need
-        }
-    }
+    digitalWrite(ONBOARD_LED_PIN, HIGH); // writes a digital high to pin 2
+    delay(1000); // waits for 1000 milliseconds (1 second)
+    digitalWrite(ONBOARD_LED_PIN, LOW); // writes a digital low to pin 2
+    delay(1000);
 }
