@@ -41,7 +41,7 @@ void loop() {
     BP32.update(); 
     for (auto myController : myControllers) { // Only execute code when controller is connected
         if (myController && myController->isConnected() && myController->hasData()) {        
-          
+
             /*
             ====================
             Your code goes here!
