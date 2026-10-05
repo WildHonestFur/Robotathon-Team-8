@@ -31,12 +31,25 @@ void dumpGamepad(ControllerPtr ctl) {
 }
 
 void setup() {
-    pinMode(ONBOARD_LED_PIN, OUTPUT); // configures pin 2 to be a GPIO output pin 
+    BP32.setup(&onConnectedController, &onDisconnectedController);
+    BP32.forgetBluetoothKeys(); 
+    esp_log_level_set("gpio", ESP_LOG_ERROR); // Suppress info log spam from gpio_isr_service
+    uni_bt_allowlist_set_enabled(true);
 }
 
 void loop() {
-    digitalWrite(ONBOARD_LED_PIN, HIGH); // writes a digital high to pin 2
-    delay(1000); // waits for 1000 milliseconds (1 second)
-    digitalWrite(ONBOARD_LED_PIN, LOW); // writes a digital low to pin 2
-    delay(1000);
+    vTaskDelay(1); // Ensures WDT does not get triggered when no controller is connected
+    BP32.update(); 
+    for (auto myController : myControllers) { // Only execute code when controller is connected
+        if (myController && myController->isConnected() && myController->hasData()) {        
+
+            /*
+            ====================
+            Your code goes here!
+            ====================
+            */
+
+            dumpGamepad(myController); // Prints the gamepad state, delete or comment if don't need
+        }
+    }
 }
