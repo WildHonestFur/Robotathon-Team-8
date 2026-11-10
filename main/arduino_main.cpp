@@ -5,6 +5,7 @@
 #include <Bluepad32.h>
 #include <uni.h>
 #include "controller_callbacks.h"
+#include <QTRSensors.h>
 
 // Color Sensor
 #define APDS9960_INT 4     
@@ -12,7 +13,7 @@
 #define I2C_SCL 22
 #define I2C_FREQ 100000
 TwoWire I2C_0 = TwoWire(0);
-APDS9960 sensor = APDS9960(I2C_0, APDS9960_INT);
+APDS9960 apds = APDS9960(I2C_0, APDS9960_INT);
 
 // Controller 
 #define ONBOARD_LED_PIN 2 
@@ -72,37 +73,81 @@ void drive(int Lx, int Ly, int DEADZONE = 40) {
 }
 
 struct Modes {
-    bool driveMode
-    bool colorMode
-    bool sensorMode
-}
+    bool driveMode;
+    bool colorMode;
+    bool sensorMode;
+};
 
 Modes switchModes(int a, int b, int x, Modes m){
-    if a != 0{
+    if (a != 0) {
         m.driveMode = true;
         m.colorMode = false;
         m.sensorMode = false;
     }
-    if b != 0{
+    if (b != 0) {
         m.driveMode = false;
         m.colorMode = true;
         m.sensorMode = false;
     }
-    if x != 0{
+    if (x != 0) {
         m.driveMode = false;
         m.colorMode = false;
         m.sensorMode = true;
     }
-    return m
+    return m;
 }
-    
+
+struct Colors {
+    int r, g, b, a;
+};
+
+Colors getColors() {
+    int r = 0, g = 0, b = 0, a = 0;
+    while (!apds.colorAvailable()) { delay(5); }  // wait for sensor
+    apds.readColor(r, g, b, a);
+    Colors color = {r, g, b, a};
+    return color;
+}
+
+void printColors(const Colors &c) {
+    Serial.printf("R: %d  G: %d  B: %d  A: %d\n", c.r, c.g, c.b, c.a);
+}
+
+bool colorsMatch(const Colors &c1, const Colors &c2, int tolerance) {
+    return abs(c1.r - c2.r) <= tolerance &&
+           abs(c1.g - c2.g) <= tolerance &&
+           abs(c1.b - c2.b) <= tolerance &&
+           abs(c1.a - c2.a) <= tolerance;
+}
+
+void goForwardUntil(Colors target, int l1) {
+    if (l1 == 0) return;  // only run when l1 is pressed
+
+    // Start moving forward
+    leftMotor(1);
+    rightMotor(1);
+
+    // Keep scanning until the current color is within 20 of the target
+    while (true) {
+        Colors current = getColors();  // y = 1 so it actually reads the sensor
+        if (colorsMatch(current, target, 5)) {
+            break;
+        }
+    }
+
+    // Stop both motors
+    leftMotor(0);
+    rightMotor(0);
+}
+
+
 
 void setup() {
     Serial.begin(115200);
 
     I2C_0.begin(I2C_SDA, I2C_SCL, I2C_FREQ);
-    sensor.setInterruptPin(APDS9960_INT);
-    if (!sensor.begin()) {
+    apds.setInterruptPin(APDS9960_INT);
+    if (!apds.begin()) {
         Serial.println("APDS9960 not found, check wiring");
         while (true) delay(1000);
     }
@@ -130,25 +175,49 @@ void loop() {
             int a = myController->a();
             int b = myController->b();
             int x = myController->x();
-            
+            int y = myController->y();
+            int l1 = myController->l1();
+
             // Default Modes
             static Modes modes = {true, false, false};
-            
+            static Modes prevModes = {false, false, false};  // all false so the starting mode prints once
+            static int prevY = 0;
+            static Colors targetColor = {0, 0, 0, 0};
             // Update Modes
             modes = switchModes(a, b, x, modes);
 
-            if m.driveMode {
-                drive(lx, ly,)
+            // Print only when a mode just turned on
+            if (modes.driveMode && !prevModes.driveMode) {
+                Serial.println("Drive Mode is on");
+            }
+            if (modes.colorMode && !prevModes.colorMode) {
+                Serial.println("Color Mode is on");
+            }
+            if (modes.sensorMode && !prevModes.sensorMode) {
+                Serial.println("Sensor Mode is on");
             }
 
-            if m.colorMode {
-                // Color Function
+            // Mode logic (runs every loop, no printing)
+            if (modes.driveMode) {
+                drive(lx, ly);
             }
 
-            if m.sensorMode {
+            if (modes.colorMode) {
+                if (y != 0 && prevY == 0) {
+                    targetColor = getColors();
+                    Serial.println("Color is remembered");
+                    printColors(targetColor);
+                }
+                goForwardUntil(targetColor, l1);
+            }
+
+            if (modes.sensorMode) {
                 // Sensor Function
             }
-            }
+
+            prevModes = modes;  // remember for next loop
+            prevY = y;
             //dumpGamepad(myController); // Prints the gamepad state, delete or comment if don't need
-        }
     }
+}
+}
