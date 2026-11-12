@@ -55,7 +55,7 @@ void rightMotor(int dir) {
     else                { digitalWrite(IN3, LOW);  digitalWrite(IN4, LOW);  }
 }
 
-void drive(int Lx, int Ly, int DEADZONE = 40) {
+void drive(int Lx, int Ly) {
     bool fwd   = (Ly >  DEADZONE);
     bool back  = (Ly < -DEADZONE);
     bool right = (Lx >  DEADZONE);
@@ -120,42 +120,67 @@ bool colorsMatch(const Colors &c1, const Colors &c2, int tolerance) {
            abs(c1.a - c2.a) <= tolerance;
 }
 
-void goForwardUntil(Colors target, int l1) {
-    if (l1 == 0) return;  // only run when l1 is pressed
+// Non-blocking read: returns false if no new reading is ready yet
+bool tryGetColors(Colors &out) {
+    if (!apds.colorAvailable()) return false;
+    int r = 0, g = 0, b = 0, a = 0;
+    apds.readColor(r, g, b, a);
+    out = {r, g, b, a};
+    return true;
+}
 
-    // Start moving forward
+const unsigned long SEEK_TIMEOUT_MS = 30000;  // give up after 30 seconds
+const int COLOR_TOLERANCE = 8;
+
+// One step of the seek. Call every loop while seeking.
+// Returns true when seeking is finished (color matched or timed out).
+bool goForwardUntil(const Colors &target, unsigned long startMs) {
     leftMotor(1);
     rightMotor(1);
 
-    // Keep scanning until the current color is within 20 of the target
-    while (true) {
-        Colors current = getColors();  // y = 1 so it actually reads the sensor
-        if (colorsMatch(current, target, 5)) {
-            break;
-        }
+    Colors current;
+    if (tryGetColors(current) && colorsMatch(current, target, COLOR_TOLERANCE)) {
+        leftMotor(0);
+        rightMotor(0);
+        Serial.println("Target color found");
+        return true;
     }
 
-    // Stop both motors
-    leftMotor(0);
-    rightMotor(0);
+    if (millis() - startMs > SEEK_TIMEOUT_MS) {
+        leftMotor(0);
+        rightMotor(0);
+        Serial.println("Seek timed out");
+        return true;
+    }
+    return false;
 }
 
 
 
+QTRSensors qtr;
+uint16_t sensors[8];
+
 void setup() {
     Serial.begin(115200);
 
-    I2C_0.begin(I2C_SDA, I2C_SCL, I2C_FREQ);
-    apds.setInterruptPin(APDS9960_INT);
-    if (!apds.begin()) {
-        Serial.println("APDS9960 not found, check wiring");
-        while (true) delay(1000);
-    }
-
     BP32.setup(&onConnectedController, &onDisconnectedController);
     BP32.forgetBluetoothKeys(); 
-    esp_log_level_set("gpio", ESP_LOG_ERROR);
+    esp_log_level_set("gpio", ESP_LOG_ERROR); // Suppress info log spam from gpio_isr_service
     uni_bt_allowlist_set_enabled(true);
+
+    /*qtr.setTypeAnalog(); // or setTypeAnalog()
+    qtr.setSensorPins((const uint8_t[]) {32, 33, 36, 39, 34, 35, 26, 25}, 8); // the numbers in the bracket is for sensor 1 to 8, 8 is just the number of sensors used. They range from 0 to 1000, 0 being black and 1000 being white.
+
+    for (uint8_t i = 0; i < 250; i++) {
+        Console.printf("calibrating %d/250\n", i); // 250 is the number of calibrations recommended by manufacturer
+        qtr.calibrate();
+        delay(20);
+    }*/
+
+    I2C_0.begin(I2C_SDA, I2C_SCL, I2C_FREQ);
+    apds.setInterruptPin(APDS9960_INT);
+    apds.begin();
+
     pinMode(IN1, OUTPUT);
     pinMode(IN2, OUTPUT);
     pinMode(IN3, OUTPUT);
@@ -182,6 +207,9 @@ void loop() {
             static Modes modes = {true, false, false};
             static Modes prevModes = {false, false, false};  // all false so the starting mode prints once
             static int prevY = 0;
+            static int prevL1 = 0;
+            static bool seeking = false;
+            static unsigned long seekStart = 0;
             static Colors targetColor = {0, 0, 0, 0};
             // Update Modes
             modes = switchModes(a, b, x, modes);
@@ -199,7 +227,7 @@ void loop() {
 
             // Mode logic (runs every loop, no printing)
             if (modes.driveMode) {
-                drive(lx, ly);
+                drive(ly, lx);
             }
 
             if (modes.colorMode) {
@@ -208,7 +236,21 @@ void loop() {
                     Serial.println("Color is remembered");
                     printColors(targetColor);
                 }
-                goForwardUntil(targetColor, l1);
+
+                // L1 (only in color mode) starts seeking; it keeps going on its own
+                if (l1 != 0 && prevL1 == 0 && !seeking) {
+                    seeking = true;
+                    seekStart = millis();
+                    Serial.println("Seeking started");
+                }
+                if (seeking && goForwardUntil(targetColor, seekStart)) {
+                    seeking = false;
+                }
+            } else if (seeking) {
+                // Left color mode mid-seek: cancel and stop
+                seeking = false;
+                leftMotor(0);
+                rightMotor(0);
             }
 
             if (modes.sensorMode) {
@@ -217,6 +259,7 @@ void loop() {
 
             prevModes = modes;  // remember for next loop
             prevY = y;
+            prevL1 = l1;
             //dumpGamepad(myController); // Prints the gamepad state, delete or comment if don't need
     }
 }
